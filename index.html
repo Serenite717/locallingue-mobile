@@ -320,6 +320,16 @@ input.bad{background:rgba(244,63,94,.15);color:var(--red)}
 </div>
 </div>
 
+<div class="page" id="p-dict">
+<div class="page-inner">
+  <h1 style="margin-bottom:4px">Словарь</h1>
+  <div class="muted" id="dict-count" style="margin-bottom:10px"></div>
+  <input type="text" id="dict-search" placeholder="Поиск в загруженной букве…" oninput="filterDict()" style="margin-bottom:10px">
+  <div class="pills" id="dict-letters"></div>
+  <div id="dict-list" style="margin-top:10px"></div>
+</div>
+</div>
+
 <div class="page" id="p-gram">
 <div class="page-inner">
   <h1 style="margin-bottom:14px">Грамматика</h1>
@@ -364,6 +374,7 @@ input.bad{background:rgba(244,63,94,.15);color:var(--red)}
   <button onclick="nav('flash',this)"><span class="ico">🃏</span>Карточки</button>
   <button onclick="nav('trans',this)"><span class="ico">✍️</span>Перевод</button>
   <button onclick="nav('reading',this)"><span class="ico">📖</span>Чтение</button>
+  <button onclick="nav('dict',this)"><span class="ico">📕</span>Словарь</button>
   <button onclick="nav('gram',this)"><span class="ico">📚</span>Ещё</button>
   <button onclick="nav('ai',this)"><span class="ico">🤖</span>ИИ</button>
 </nav>
@@ -428,6 +439,7 @@ function nav(id,btn){
   if(id==='gram'){renderGram();renderPhr();}
   if(id==='ai')initAI();
   if(id==='reading')renderReadingList();
+  if(id==='dict')initDict();
 }
 
 function renderHome(){
@@ -725,6 +737,89 @@ document.getElementById('reading-body').addEventListener('click',e=>{
   const host=document.getElementById('rd-def');
   if(host)host.textContent=ru?`${clean} — ${ru}`:`${clean} — перевод не найден`;
 });
+
+// ── Dictionary (huge reserve dictionary — browse by letter + search) ─────────
+const dictCache={};   // "lang:LETTER" -> array of {w,ru,pos,topic}
+const dictIndexCache={}; // lang -> array of letters
+let dictCurLetter=null;
+
+function initDict(){
+  if(dictIndexCache[WORD_KEY]){
+    renderDictLetters();
+    return;
+  }
+  document.getElementById('dict-count').textContent='Загрузка списка букв…';
+  fetch('dict_data/'+WORD_KEY+'/_index.json')
+    .then(r=>r.json())
+    .then(letters=>{
+      dictIndexCache[WORD_KEY]=letters;
+      renderDictLetters();
+    })
+    .catch(()=>{
+      document.getElementById('dict-count').textContent='Словарь недоступен офлайн — нужно подключение к интернету при первом открытии.';
+    });
+}
+
+function renderDictLetters(){
+  const letters=dictIndexCache[WORD_KEY]||[];
+  document.getElementById('dict-count').textContent=letters.length?'Выбери букву, чтобы пролистать словарь':'';
+  document.getElementById('dict-letters').innerHTML=letters.map(l=>
+    `<button class="pill" data-letter="${l}" onclick="openDictLetter('${l}')">${l==='_other'?'#':l}</button>`
+  ).join('');
+  document.getElementById('dict-list').innerHTML='';
+  document.getElementById('dict-search').value='';
+  dictCurLetter=null;
+}
+
+function openDictLetter(letter){
+  dictCurLetter=letter;
+  document.getElementById('dict-search').value='';
+  document.querySelectorAll('#dict-letters .pill').forEach(b=>b.classList.toggle('active',b.dataset.letter===letter));
+  const key=WORD_KEY+':'+letter;
+  if(dictCache[key]){
+    renderDictList(dictCache[key]);
+    return;
+  }
+  document.getElementById('dict-list').innerHTML='<p class="muted">Загрузка…</p>';
+  fetch('dict_data/'+WORD_KEY+'/'+letter+'.json')
+    .then(r=>r.json())
+    .then(entries=>{
+      dictCache[key]=entries;
+      renderDictList(entries);
+    })
+    .catch(()=>{
+      document.getElementById('dict-list').innerHTML='<p class="muted">Не удалось загрузить — проверь интернет.</p>';
+    });
+}
+
+function renderDictList(entries){
+  if(!entries.length){
+    document.getElementById('dict-list').innerHTML='<p class="muted">Пусто.</p>';
+    return;
+  }
+  document.getElementById('dict-list').innerHTML=
+    `<div class="muted" style="margin-bottom:8px">${entries.length} слов</div>` +
+    entries.map(e=>
+      `<div class="card" style="margin-bottom:8px;padding:12px 16px">
+         <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
+           <b style="color:var(--accent)">${esc(e.w)}</b>
+           ${e.pos?`<span class="muted" style="font-size:11px">${esc(e.pos)}</span>`:''}
+         </div>
+         <div style="margin-top:2px">${esc(e.ru||'')}</div>
+       </div>`
+    ).join('');
+}
+
+function filterDict(){
+  const q=document.getElementById('dict-search').value.trim().toLowerCase();
+  if(!dictCurLetter){
+    document.getElementById('dict-list').innerHTML=q?'<p class="muted">Сначала выбери букву.</p>':'';
+    return;
+  }
+  const all=dictCache[WORD_KEY+':'+dictCurLetter]||[];
+  if(!q){renderDictList(all);return;}
+  renderDictList(all.filter(e=>e.w.toLowerCase().includes(q)||(e.ru||'').toLowerCase().includes(q)));
+}
 
 const GRAM_LEVEL_ORDER=['A1','A2','B1','B2'];
 function renderGram(){
