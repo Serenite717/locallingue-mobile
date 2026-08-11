@@ -489,6 +489,7 @@ input.bad{background:rgba(244,63,94,.15);color:var(--red)}
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0;gap:6px">
       <h1 style="flex:1">ИИ-бот 🤖</h1>
       <button class="pill" onclick="toggleSavedView()" id="ai-saved-btn" style="font-size:11px;padding:5px 10px">📌<span id="ai-saved-count"></span></button>
+      <button class="pill" onclick="clearAiChat()" style="font-size:11px;padding:5px 10px">🗑</button>
       <button class="pill" onclick="resetAiKey()" style="font-size:11px;padding:5px 12px">🔑 Ключ</button>
     </div>
     <div style="display:flex;gap:6px;margin-bottom:10px;flex-shrink:0" id="ai-mode-row">
@@ -1762,6 +1763,19 @@ function updateSaveBtnVisibility(){
   btn.style.display=(!savedViewOpen&&aiMode==='qa'&&qaHistory.length>=2)?'':'none';
 }
 
+function clearAiChat(){
+  if(!confirm('Очистить текущий чат?'))return;
+  document.getElementById('chat-area').innerHTML='';
+  if(aiMode==='practice'){
+    aiHistory=[];
+    startAiSession();
+  } else {
+    qaHistory=[];
+    appendMsg('bot','Спрашивай что угодно про язык — грамматику, слова, темы, произношение. Отвечу подробно.');
+    updateSaveBtnVisibility();
+  }
+}
+
 function saveLastQa(){
   if(qaHistory.length<2)return;
   const last=qaHistory[qaHistory.length-1];
@@ -1877,6 +1891,8 @@ async function startAiSession(){
   await callAI('Начнём! Задай мне первый вопрос.',true);
 }
 
+const AI_MAX_CONTINUATIONS=3;
+
 async function callAI(userText,silent=false){
   if(!silent)appendMsg('user',userText);
   const hist=aiMode==='practice'?aiHistory:qaHistory;
@@ -1885,26 +1901,38 @@ async function callAI(userText,silent=false){
   const btn=document.getElementById('chat-send-btn');
   if(btn)btn.disabled=true;
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{
-      method:'POST',
-      headers:{
-        'x-api-key':aiKey,
-        'anthropic-version':'2023-06-01',
-        'content-type':'application/json',
-        'anthropic-dangerous-direct-browser-access':'true'
-      },
-      body:JSON.stringify({
-        model:AI_MODEL,
-        max_tokens:aiMode==='practice'?400:800,
-        system:aiMode==='practice'?buildAiSys():buildQaSys(),
-        messages:hist
-      })
-    });
-    const data=await r.json();
-    if(data.error)throw new Error(data.error.message);
-    const reply=data.content[0].text;
-    hist.push({role:'assistant',content:reply});
-    hideTyping();appendMsg('bot',reply);
+    let steps=0;
+    while(true){
+      const r=await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{
+          'x-api-key':aiKey,
+          'anthropic-version':'2023-06-01',
+          'content-type':'application/json',
+          'anthropic-dangerous-direct-browser-access':'true'
+        },
+        body:JSON.stringify({
+          model:AI_MODEL,
+          max_tokens:aiMode==='practice'?400:1024,
+          system:aiMode==='practice'?buildAiSys():buildQaSys(),
+          messages:hist
+        })
+      });
+      const data=await r.json();
+      if(data.error)throw new Error(data.error.message);
+      const reply=data.content[0].text;
+      hist.push({role:'assistant',content:reply});
+      hideTyping();appendMsg('bot',reply);
+      steps++;
+      // response got cut off mid-answer — silently ask for the rest and post
+      // it as its own message, instead of leaving the answer truncated
+      if(data.stop_reason==='max_tokens'&&steps<AI_MAX_CONTINUATIONS){
+        hist.push({role:'user',content:'Продолжи с того места, где остановился.'});
+        showTyping();
+        continue;
+      }
+      break;
+    }
     updateSaveBtnVisibility();
   }catch(e){
     hideTyping();appendMsg('bot','⚠️ Ошибка: '+e.message);
